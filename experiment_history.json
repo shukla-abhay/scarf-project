@@ -1,0 +1,17 @@
+[
+    {
+        "dataset": "test (1).csv",
+        "scarf_accuracy": 0.45454545454545453,
+        "baseline_accuracy": 0.34545454545454546
+    },
+    {
+        "dataset": "test (1).csv",
+        "scarf_accuracy": 0.41818181818181815,
+        "baseline_accuracy": 0.34545454545454546
+    },
+    {
+        "dataset": "test (1).csv",
+        "scarf_accuracy": 0.45454545454545453,
+        "baseline_accuracy": 0.34545454545454546
+    }
+]
