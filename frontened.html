@@ -109,30 +109,12 @@ body::before {
     border: 1px solid rgba(59, 130, 246, 0.15);
     backdrop-filter: blur(10px);
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-    position: relative;
-    overflow: hidden;
-}
-
-.card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 100%;
-    background: linear-gradient(135deg, rgba(59, 130, 246, 0.05) 0%, transparent 100%);
-    opacity: 0;
-    transition: opacity 0.4s;
 }
 
 .card:hover {
     transform: translateY(-8px);
     box-shadow: 0 20px 60px rgba(59, 130, 246, 0.3);
     border-color: rgba(59, 130, 246, 0.4);
-}
-
-.card:hover::before {
-    opacity: 1;
 }
 
 .card h3 {
@@ -165,7 +147,7 @@ input[type="file"] {
     font-weight: 500;
 }
 
-input[type="file"]::file-selector-button {
+input[type="file"]::-webkit-file-upload-button {
     padding: 8px 16px;
     background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
     border: none;
@@ -177,7 +159,7 @@ input[type="file"]::file-selector-button {
     transition: all 0.3s;
 }
 
-input[type="file"]::file-selector-button:hover {
+input[type="file"]::-webkit-file-upload-button:hover {
     background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
     transform: translateY(-2px);
 }
@@ -199,26 +181,6 @@ button {
     font-weight: 700;
     transition: all 0.3s;
     box-shadow: 0 4px 20px rgba(59, 130, 246, 0.4);
-    position: relative;
-    overflow: hidden;
-}
-
-button::before {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 0;
-    height: 0;
-    border-radius: 50%;
-    background: rgba(255, 255, 255, 0.2);
-    transform: translate(-50%, -50%);
-    transition: width 0.6s, height 0.6s;
-}
-
-button:hover::before {
-    width: 300px;
-    height: 300px;
 }
 
 button:hover {
@@ -436,7 +398,7 @@ tr:hover {
     <h3>📁 Upload & Train</h3>
     <div class="upload-section">
         <input type="file" id="fileInput" accept=".csv">
-        <button onclick="train()">🎯 Start Training</button>
+        <button type="button" id="trainBtn">🎯 Start Training</button>
     </div>
 
     <div class="progress">
@@ -481,13 +443,18 @@ tr:hover {
 
 <div class="card">
     <h3>📊 Experiment History</h3>
-    <button onclick="loadHistory()">🔄 Load History</button>
+    <button type="button" id="historyBtn">🔄 Load History</button>
     <table id="historyTable"></table>
 </div>
 
 </div>
 
 <script>
+
+// Prevent any accidental navigation
+window.addEventListener('beforeunload', function(e) {
+    console.log('Page is trying to unload!');
+});
 
 // ---------------- PARTICLES ----------------
 
@@ -592,18 +559,21 @@ let accuracyChart = new Chart(document.getElementById("accuracyChart"), {
 
 // ---------------- TRAIN FUNCTION ----------------
 
-async function train() {
+document.getElementById('trainBtn').addEventListener('click', train);
+
+async function train(e) {
+    if (e) e.preventDefault();
 
     if (window.location.protocol === "file:") {
         alert("Please open this page via http://127.0.0.1:8000/ (or another http:// URL) so the backend can be reached.");
-        return;
+        return false;
     }
 
     const file = document.getElementById("fileInput").files[0];
 
     if (!file) {
         alert("Please select a CSV file first.");
-        return;
+        return false;
     }
 
     document.getElementById("status").innerText = "🔄 Training started...";
@@ -683,6 +653,9 @@ async function train() {
                         document.getElementById("baselineAcc").innerText = baselineAcc.toFixed(2) + "%";
                         document.getElementById("trainSamples").innerText = trainSamples;
                         document.getElementById("testSamples").innerText = testSamples;
+                        
+                        console.log("Training completed successfully!");
+                        console.log("Charts should be visible now");
                     }
                 }
             });
@@ -694,9 +667,13 @@ async function train() {
         document.getElementById("bar").style.width = "0%";
         console.error("Training error:", error);
     }
+    
+    return false;
 }
 
 // ---------------- LOAD HISTORY ----------------
+
+document.getElementById('historyBtn').addEventListener('click', loadHistory);
 
 async function loadHistory() {
 

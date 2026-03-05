@@ -14,7 +14,8 @@ from fastapi.staticfiles import StaticFiles
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import accuracy_score
 from sklearn.linear_model import LogisticRegression
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, cross_val_score
+from torch.utils.data import TensorDataset, DataLoader
 
 app = FastAPI()
 
@@ -66,10 +67,30 @@ def contrastive_loss(z1, z2, temp=0.5):
     return F.cross_entropy(sim, labels)
 
 def corrupt(x, rate=0.4):
-    mask = torch.rand_like(x) < rate
+    """Multiple corruption strategies like real SCARF"""
+    batch_size = x.size(0)
+    corrupted = x.clone()
+    
+    # Strategy 1: Feature masking (25%)
+    mask_features = torch.rand_like(x) < (rate * 0.25)
+    corrupted = torch.where(mask_features, torch.zeros_like(x), corrupted)
+    
+    # Strategy 2: Gaussian noise (25%)
+    noise_mask = torch.rand_like(x) < (rate * 0.25)
     noise = torch.randn_like(x) * 0.1
-    shuffled = x[torch.randperm(x.size(0))] + noise
-    return torch.where(mask, shuffled, x)
+    corrupted = torch.where(noise_mask, corrupted + noise, corrupted)
+    
+    # Strategy 3: Feature swapping (25%)
+    swap_mask = torch.rand_like(x) < (rate * 0.25)
+    shuffled = x[torch.randperm(batch_size)]
+    corrupted = torch.where(swap_mask, shuffled, corrupted)
+    
+    # Strategy 4: Sample mixing (25%)
+    mix_mask = torch.rand_like(x) < (rate * 0.25)
+    mixed = 0.5 * x + 0.5 * x[torch.randperm(batch_size)]
+    corrupted = torch.where(mix_mask, mixed, corrupted)
+    
+    return corrupted
 
 # ================= TRAIN =================
 
@@ -100,6 +121,10 @@ async def train(file: UploadFile):
     y_train_tensor = torch.tensor(y_train, dtype=torch.long)
     X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
     y_test_tensor = torch.tensor(y_test, dtype=torch.long)
+    
+    # Create DataLoader for batch training
+    train_dataset = TensorDataset(X_train_tensor, y_train_tensor)
+    train_loader = DataLoader(train_dataset, batch_size=min(64, len(X_train)//4), shuffle=True)
 
     async def stream():
         try:
@@ -107,23 +132,32 @@ async def train(file: UploadFile):
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
             scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=10, factor=0.5)
 
-            # -------- Pretraining --------
+            # -------- Pretraining with Batches --------
             for epoch in range(50):
-                x_corr = corrupt(X_train_tensor)
-                z1 = model(X_train_tensor)
-                z2 = model(x_corr)
-                loss = contrastive_loss(z1, z2)
+                epoch_loss = 0
+                for batch_X, _ in train_loader:
+                    # Create two different corrupted views
+                    x_corr1 = corrupt(batch_X)
+                    x_corr2 = corrupt(batch_X)
+                    
+                    z1 = model(x_corr1)
+                    z2 = model(x_corr2)
+                    loss = contrastive_loss(z1, z2)
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                scheduler.step(loss)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    
+                    epoch_loss += loss.item()
+                
+                avg_loss = epoch_loss / len(train_loader)
+                scheduler.step(avg_loss)
 
-                print(f"[train] pretrain epoch {epoch} loss={loss.item()}")
-                yield f"data: LOSS:{loss.item()}\n\n"
+                print(f"[train] pretrain epoch {epoch} loss={avg_loss}")
+                yield f"data: LOSS:{avg_loss}\n\n"
                 await asyncio.sleep(0.03)
 
-            # -------- Fine-tuning --------
+            # -------- Fine-tuning with Batches --------
             classifier = nn.Linear(128, len(np.unique(y_train)))
             optimizer = torch.optim.Adam(
                 list(model.backbone.parameters()) + list(classifier.parameters()),
@@ -134,17 +168,23 @@ async def train(file: UploadFile):
 
             for epoch in range(50):
                 model.train()
-                features = model.backbone(X_train_tensor)
-                preds = classifier(features)
-                loss = loss_fn(preds, y_train_tensor)
+                epoch_loss = 0
+                for batch_X, batch_y in train_loader:
+                    features = model.backbone(batch_X)
+                    preds = classifier(features)
+                    loss = loss_fn(preds, batch_y)
 
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                scheduler.step(loss)
+                    optimizer.zero_grad()
+                    loss.backward()
+                    optimizer.step()
+                    
+                    epoch_loss += loss.item()
+                
+                avg_loss = epoch_loss / len(train_loader)
+                scheduler.step(avg_loss)
 
-                print(f"[train] finetune epoch {epoch} loss={loss.item()}")
-                yield f"data: LOSS:{loss.item()}\n\n"
+                print(f"[train] finetune epoch {epoch} loss={avg_loss}")
+                yield f"data: LOSS:{avg_loss}\n\n"
                 await asyncio.sleep(0.03)
 
             # Evaluate on test set
